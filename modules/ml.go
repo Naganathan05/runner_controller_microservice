@@ -16,8 +16,8 @@ type EAML struct {
 	CrossoverFunction        string    `json:"crossoverFunction"`
 	MutationFunction         string    `json:"mutationFunction"`
 	SelectionFunction        string    `json:"selectionFunction"`
-	TournamentSize           int      `json:"tournamentSize,omitempty"`
-	Mu                       int      `json:"mu,omitempty"`
-	Lambda_                  int      `json:"lambda,omitempty"`
-	HofSize                  int      `json:"hofSize,omitempty"`
+	TournamentSize           int       `json:"tournamentSize,omitempty"`
+	Mu                       int       `json:"mu,omitempty"`
+	Lambda_                  int       `json:"lambda,omitempty"`
+	HofSize                  int       `json:"hofSize,omitempty"`
 }
