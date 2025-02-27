@@ -7,13 +7,13 @@ import (
 
 // Response is a struct for holding the response data.
 type Response struct {
-	Code    int         `json:"code"`
-	Message string      `json:"message"`
-	Data    interface{} `json:"data,omitempty"`
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    any    `json:"data,omitempty"`
 }
 
 // JSONResponse writes a JSON response to the http.ResponseWriter.
-func JSONResponse(w http.ResponseWriter, code int, message string, data interface{}) {
+func JSONResponse(w http.ResponseWriter, code int, message string, data any) {
 	response := Response{
 		Code:    code,
 		Message: message,
