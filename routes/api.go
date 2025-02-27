@@ -6,4 +6,5 @@ const (
 
 const (
 	TEST = BASE + "/test"
+	EA   = BASE + "/ea"
 )

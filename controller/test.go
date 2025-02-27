@@ -2,13 +2,13 @@ package controller
 
 import (
 	"evolve/util"
-	"log"
 	"net/http"
 )
 
 // Test is a test API for checking the server status.
 func Test(res http.ResponseWriter, req *http.Request) {
-	log.Println("[INFO]: Test API called from", req.RemoteAddr)
+	var logger = util.NewLogger()
+	logger.Info("Test API called.")
 
 	switch req.Method {
 	case "GET":

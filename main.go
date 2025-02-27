@@ -14,6 +14,7 @@ func main() {
 
 	// Register routes.
 	http.HandleFunc(routes.TEST, controller.Test)
+	http.HandleFunc(routes.EA, controller.CreateEA)
 
 	logger.Info(fmt.Sprintf("Test http server on http://localhost%v/api/test", config.PORT))
 
