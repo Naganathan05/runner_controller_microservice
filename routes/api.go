@@ -6,4 +6,7 @@ const (
 
 const (
 	TEST = BASE + "/test"
+	EA   = BASE + "/ea"
+	GP   = BASE + "/gp"
+	ML   = BASE + "/ml"
 )
