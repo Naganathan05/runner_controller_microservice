@@ -29,7 +29,7 @@ type EA struct {
 	CustomSelection    string    `json:"customSelection,omitempty"` // NEW
 	TournamentSize     int       `json:"tournamentSize,omitempty"`
 	Mu                 int       `json:"mu,omitempty"`
-	Lambda_            int       `json:"lambda,omitempty"`
+	Lambda             int       `json:"lambda_,omitempty"`
 	HofSize            int       `json:"hofSize,omitempty"`
 }
 
@@ -129,9 +129,9 @@ func (ea *EA) callAlgo() string {
 	case "easimple":
 		return "\tpop, logbook = algorithms.eaSimple(pop, toolbox, cxpb=cxpb, mutpb=mutpb, ngen=generations, stats=stats, halloffame=hof, verbose=True)\n"
 	case "eamupluslambda":
-		return fmt.Sprintf("\tmu = %d\n", ea.Mu) + fmt.Sprintf("\tlambda_ = %d\n", ea.Lambda_) + "\tpop, logbook = algorithms.eaMuPlusLambda(pop, toolbox, mu=mu, lambda_=lambda_, cxpb=cxpb, mutpb=mutpb, ngen=generations, stats=stats, halloffame=hof, verbose=True)\n"
+		return fmt.Sprintf("\tmu = %d\n", ea.Mu) + fmt.Sprintf("\tlambda_ = %d\n", ea.Lambda) + "\tpop, logbook = algorithms.eaMuPlusLambda(pop, toolbox, mu=mu, lambda_=lambda_, cxpb=cxpb, mutpb=mutpb, ngen=generations, stats=stats, halloffame=hof, verbose=True)\n"
 	case "eamucommalambda":
-		return fmt.Sprintf("\tmu = %d\n", ea.Mu) + fmt.Sprintf("\tlambda_ = %d\n", ea.Lambda_) + "\tpop, logbook = algorithms.eaMuCommaLambda(pop, toolbox, mu=mu, lambda_=lambda_, cxpb=cxpb, mutpb=mutpb, ngen=generations, stats=stats, halloffame=hof, verbose=True)\n"
+		return fmt.Sprintf("\tmu = %d\n", ea.Mu) + fmt.Sprintf("\tlambda_ = %d\n", ea.Lambda) + "\tpop, logbook = algorithms.eaMuCommaLambda(pop, toolbox, mu=mu, lambda_=lambda_, cxpb=cxpb, mutpb=mutpb, ngen=generations, stats=stats, halloffame=hof, verbose=True)\n"
 	case "eagenerateupdate":
 		return fmt.Sprintf("\tstrategy = cma.Strategy(centroid=[5.0]*%d, sigma=5.0, lambda_=20*{N})\n", ea.IndividualSize) + "\ttoolbox.register(\"generate\", strategy.generate, creator.Individual)\n" + "\ttoolbox.register(\"update\", strategy.update)\n" + "\tpop, logbook = algorithms.eaGenerateUpdate(toolbox, ngen=generations, stats=stats, halloffame=hof, verbose=True)\n"
 	default:
@@ -184,7 +184,8 @@ func (ea *EA) Code() (string, error) {
 	code += ea.CustomSelection + "\n\n"
 
 	code += "toolbox = base.Toolbox()\n\n"
-	code += "creator.create(\"FitnessMax\", base.Fitness, weights=" + fmt.Sprint(ea.Weights) + ")\n"
+	weights := strings.ReplaceAll(strings.ReplaceAll(fmt.Sprintf("%v", ea.Weights), "[", "("), "]", ")")
+	code += fmt.Sprintf("creator.create('FitnessMax', base.Fitness, weights=%s)\n", weights)
 	code += "creator.create(\"Individual\", list, fitness=creator.FitnessMax)\n\n"
 
 	code += ea.registerIndividual() + "\n"
