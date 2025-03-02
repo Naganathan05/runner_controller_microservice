@@ -134,7 +134,7 @@ func (gp *GP) renameArgs() string {
 func (gp *GP) selectionFunction() string {
 	// TODO: Add support for other selection functions.
 	switch gp.SelectionFunction {
-	case "tools.selTournament":
+	case "selTournament":
 		return fmt.Sprintf("toolbox.register('select', tools.%s, tournsize=%d)\n", gp.SelectionFunction, gp.TournamentSize)
 	default:
 		return fmt.Sprintf("toolbox.register('select', tools.%s)\n", gp.SelectionFunction)
@@ -271,7 +271,7 @@ func (gp *GP) Code() (string, error) {
 	code += "pset.addEphemeralConstant('rand101', partial(random.randint, -1, 1))\n"
 	code += gp.renameArgs() + "\n"
 
-	weights := strings.ReplaceAll(strings.ReplaceAll(fmt.Sprintf("%v", gp.Weights), "[", "("), "]", ")")
+	weights := strings.ReplaceAll(strings.ReplaceAll(fmt.Sprintf("%f", gp.Weights), "[", "("), "]", ",)")
 	code += fmt.Sprintf("creator.create('Fitness', base.Fitness, weights=%s)\n", weights)
 	code += "creator.create('Individual', gp.PrimitiveTree, fitness=creator.Fitness)\n\n"
 
