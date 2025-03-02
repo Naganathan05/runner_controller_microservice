@@ -3,6 +3,7 @@ module evolve
 go 1.22.0
 
 require (
+	github.com/rs/cors v1.11.1
 	google.golang.org/grpc v1.70.0
 	google.golang.org/protobuf v1.36.5
 )
