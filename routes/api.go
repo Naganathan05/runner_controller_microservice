@@ -9,4 +9,5 @@ const (
 	EA   = BASE + "/ea"
 	GP   = BASE + "/gp"
 	ML   = BASE + "/ml"
+	PSO  = BASE + "/pso"
 )

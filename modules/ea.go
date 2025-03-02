@@ -184,7 +184,7 @@ func (ea *EA) Code() (string, error) {
 	code += ea.CustomSelection + "\n\n"
 
 	code += "toolbox = base.Toolbox()\n\n"
-	weights := strings.ReplaceAll(strings.ReplaceAll(fmt.Sprintf("%v", ea.Weights), "[", "("), "]", ")")
+	weights := strings.ReplaceAll(strings.ReplaceAll(fmt.Sprintf("%f", ea.Weights), "[", "("), "]", ",)")
 	code += fmt.Sprintf("creator.create('FitnessMax', base.Fitness, weights=%s)\n", weights)
 	code += "creator.create(\"Individual\", list, fitness=creator.FitnessMax)\n\n"
 

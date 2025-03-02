@@ -79,7 +79,7 @@ func (ml *EAML) googleDriveDownloadFunc() string {
 func (ml *EAML) selectionFunction() string {
 	// TODO: Add support for other selection functions.
 	switch ml.SelectionFunction {
-	case "tools.selTournament":
+	case "selTournament":
 		return fmt.Sprintf("toolbox.register('select', tools.%s, tournsize=%d)\n", ml.SelectionFunction, ml.TournamentSize)
 	default:
 		return fmt.Sprintf("toolbox.register('select', tools.%s)\n", ml.SelectionFunction)
@@ -146,6 +146,7 @@ func (ml *EAML) Code() (string, error) {
 	code += ml.selectionFunction() + "\n"
 	code += "\ntoolbox.register(\"map\", futures.map)\n\n"
 
+	weights := strings.ReplaceAll(strings.ReplaceAll(fmt.Sprintf("%f", ml.Weights), "[", "("), "]", ",)")
 	code += strings.Join([]string{
 		"def main():",
 		"\trootPath = os.path.dirname(os.path.abspath(__file__))",
@@ -155,7 +156,7 @@ func (ml *EAML) Code() (string, error) {
 		"\tX = df.drop(target, axis=1)",
 		"\ty = df[target]",
 		"\taccuracy = mlEvalFunction([1 for _ in range(len(X.columns))], X, y)",
-		fmt.Sprintf("\tcreator.create(\"FitnessMax\", base.Fitness, weights=%v)", ml.Weights),
+		fmt.Sprintf("\tcreator.create(\"FitnessMax\", base.Fitness, weights=%v)", weights),
 		"\tcreator.create(\"Individual\", list, fitness=creator.FitnessMax)",
 		"\ttoolbox.register(\"attr\", random.randint, 0, 1)",
 	}, "\n") + "\n"
