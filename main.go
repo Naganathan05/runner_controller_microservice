@@ -7,6 +7,8 @@ import (
 	"evolve/util"
 	"fmt"
 	"net/http"
+
+	"github.com/rs/cors"
 )
 
 func main() {
@@ -21,7 +23,8 @@ func main() {
 
 	logger.Info(fmt.Sprintf("Test http server on http://localhost%v/api/test", config.PORT))
 
-	if err := http.ListenAndServe(config.PORT, nil); err != nil {
+	corsHandler := cors.Default().Handler(http.DefaultServeMux)
+	if err := http.ListenAndServe(config.PORT, corsHandler); err != nil {
 		logger.Error(fmt.Sprintf("Failed to start server: %v", err))
 		return
 	}
