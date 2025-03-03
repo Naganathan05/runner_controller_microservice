@@ -23,7 +23,12 @@ func main() {
 
 	logger.Info(fmt.Sprintf("Test http server on http://localhost%v/api/test", config.PORT))
 
-	corsHandler := cors.Default().Handler(http.DefaultServeMux)
+	corsHandler := cors.New(cors.Options{
+		AllowedOrigins:   []string{"http://localhost:3000"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"*"},
+		AllowCredentials: true,
+	}).Handler(http.DefaultServeMux)
 	if err := http.ListenAndServe(config.PORT, corsHandler); err != nil {
 		logger.Error(fmt.Sprintf("Failed to start server: %v", err))
 		return
