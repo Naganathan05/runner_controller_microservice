@@ -26,3 +26,5 @@ go.work.sum
 *.py
 code/
 input/
+
+.DS_Store
