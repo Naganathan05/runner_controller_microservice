@@ -54,7 +54,7 @@ func CreateGP(res http.ResponseWriter, req *http.Request) {
 		INSERT INTO run (name, description, type, command, createdBy)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id
-	`, time.Now().GoString(), "Genetic Programming (GP)", "gp", "python -m scoop code.py", user["id"])
+	`, time.Now().Local().String(), "Genetic Programming (GP)", "gp", "python -m scoop code.py", user["id"])
 
 	var runID string
 	err = row.Scan(&runID)

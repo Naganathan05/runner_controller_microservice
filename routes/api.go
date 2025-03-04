@@ -10,4 +10,5 @@ const (
 	GP   = BASE + "/gp"
 	ML   = BASE + "/ml"
 	PSO  = BASE + "/pso"
+	RUNS = BASE + "/runs"
 )

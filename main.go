@@ -20,6 +20,7 @@ func main() {
 	http.HandleFunc(routes.GP, controller.CreateGP)
 	http.HandleFunc(routes.ML, controller.CreateML)
 	http.HandleFunc(routes.PSO, controller.CreatePSO)
+	http.HandleFunc(routes.RUNS, controller.UserRuns)
 
 	logger.Info(fmt.Sprintf("Test http server on http://localhost%v/api/test", config.PORT))
 
