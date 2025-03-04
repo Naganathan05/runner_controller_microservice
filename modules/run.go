@@ -2,11 +2,17 @@ package modules
 
 import (
 	"context"
+	"encoding/json"
 	"evolve/db/connection"
 	"evolve/util"
 	"fmt"
 	"time"
 )
+
+type ShareRunReq struct {
+	RunID         string   `json:"runID"`
+	UserEmailList []string `json:"userEmailList"` // List of emails to share the run with.
+}
 
 func UserRuns(ctx context.Context, userID string, logger *util.Logger) ([]map[string]string, error) {
 	db, err := connection.PoolConn(ctx)
@@ -87,4 +93,65 @@ func UserRuns(ctx context.Context, userID string, logger *util.Logger) ([]map[st
 	// logger.Info(fmt.Sprintf("Runs: %s", runs))
 
 	return runs, nil
+}
+
+func ShareRunReqFromJSON(jsonData map[string]any) (*ShareRunReq, error) {
+	s := &ShareRunReq{}
+	jsonDataBytes, err := json.Marshal(jsonData)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := json.Unmarshal(jsonDataBytes, s); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+func (s *ShareRunReq) ShareRun(ctx context.Context, logger *util.Logger) error {
+	db, err := connection.PoolConn(ctx)
+	if err != nil {
+		logger.Error(fmt.Sprintf("ShareRun: %s", err.Error()))
+		return fmt.Errorf("something went wrong")
+	}
+
+	// Check if run exists.
+	var runID string
+	if err := db.QueryRow(ctx, "SELECT id FROM run WHERE id = $1", s.RunID).Scan(&runID); err != nil {
+		logger.Error(fmt.Sprintf("ShareRun.db.QueryRow: %s", err.Error()))
+		return fmt.Errorf("run does not exist")
+	}
+
+	// Check if provided emails exist.
+	rows, err := db.Query(ctx, "SELECT id FROM users WHERE email = ANY($1)", s.UserEmailList)
+	if err != nil {
+		logger.Error(fmt.Sprintf("ShareRun.db.Query: %s", err.Error()))
+		return fmt.Errorf("something went wrong")
+	}
+
+	var userIDs []string
+	for rows.Next() {
+		var id string
+		err = rows.Scan(&id)
+		if err != nil {
+			logger.Error(fmt.Sprintf("ShareRun.rows.Scan: %s", err.Error()))
+			return fmt.Errorf("something went wrong")
+		}
+		userIDs = append(userIDs, id)
+	}
+
+	if len(userIDs) == 0 || len(userIDs) != len(s.UserEmailList) {
+		return fmt.Errorf("please check the emails again. some of them do not exist")
+	}
+
+	// Share the run with the users.
+	for _, userID := range userIDs {
+		_, err = db.Exec(ctx, "INSERT INTO access (runID, userID, mode) VALUES ($1, $2, $3)", s.RunID, userID, "read")
+		if err != nil {
+			logger.Error(fmt.Sprintf("ShareRun.db.Exec: %s", err.Error()))
+			return fmt.Errorf("make sure the run is not already shared with the user")
+		}
+	}
+
+	return nil
 }

@@ -27,5 +27,37 @@ func UserRuns(res http.ResponseWriter, req *http.Request) {
 	}
 
 	util.JSONResponse(res, http.StatusOK, "User runs", runs)
+}
 
+func ShareRun(res http.ResponseWriter, req *http.Request) {
+	var logger = util.NewLogger()
+	logger.Info("ShareRun API called.")
+
+	user, err := modules.Auth(req)
+	if err != nil {
+		util.JSONResponse(res, http.StatusUnauthorized, err.Error(), nil)
+		return
+	}
+
+	// User has id, role, userName, email & fullName.
+	logger.Info(fmt.Sprintf("User: %s", user))
+
+	data, err := util.Body(req)
+	if err != nil {
+		util.JSONResponse(res, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+
+	srq, err := modules.ShareRunReqFromJSON(data)
+	if err != nil {
+		util.JSONResponse(res, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+
+	if err := srq.ShareRun(req.Context(), logger); err != nil {
+		util.JSONResponse(res, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+
+	util.JSONResponse(res, http.StatusOK, "Run shared.", nil)
 }
