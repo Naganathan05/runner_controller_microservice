@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"evolve/util"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -19,7 +20,7 @@ type EA struct {
 	Cxpb               float64   `json:"cxpb"`
 	Mutpb              float64   `json:"mutpb"`
 	Weights            []float64 `json:"weights"`
-	IndividualSize     int       `json:"individualSize"`
+	IndividualSize     int       `json:"individualSize"` // Number of Dimensions.
 	Indpb              float64   `json:"indpb"`
 	RandomRange        []float64 `json:"randomRange"`
 	CrossoverFunction  string    `json:"crossoverFunction"`
@@ -31,6 +32,10 @@ type EA struct {
 	Mu                 int       `json:"mu,omitempty"`
 	Lambda             int       `json:"lambda_,omitempty"`
 	HofSize            int       `json:"hofSize,omitempty"`
+
+	// Differential Evolution Params.
+	CrossOverRate float64 `json:"crossOverRate,omitempty"`
+	ScalingFactor float64 `json:"scalingFactor,omitempty"`
 }
 
 func EAFromJSON(jsonData map[string]any) (*EA, error) {
@@ -62,12 +67,18 @@ func (ea *EA) imports() string {
 		"import matplotlib.pyplot as plt",
 		"from functools import reduce",
 		"from scoop import futures",
+		"from deap import benchmarks",
 	}, "\n")
 }
 
 // If the function is a built-in function, return the corresponding Python code.
 // Otherwise, return the function string as is.
 func (ea *EA) evalFunction() string {
+	if slices.Contains([]string{"rand", "plane", "sphere", "cigar", "rosenbrock", "h1", "ackley", "bohachevsky", "griewank", "rastrigin", "rastrigin_scaled", "rastrigin_skew", "schaffer", "schwefel", "himmelblau"}, ea.EvaluationFunction) {
+		ea.EvaluationFunction = "benchmarks." + ea.EvaluationFunction
+		return ""
+	}
+
 	switch ea.EvaluationFunction {
 	case "evalOneMax":
 		return "def evalOneMax(individual):\n    return sum(individual),"
@@ -109,6 +120,8 @@ func (ea *EA) mutationFunction() string {
 	switch ea.MutationFunction {
 	case "mutFlipBit":
 		return fmt.Sprintf("toolbox.register(\"mutate\", tools.%s, indpb=%f)\n", ea.MutationFunction, ea.Indpb)
+	case "mutShuffleIndexes":
+		return fmt.Sprintf("toolbox.register(\"mutate\", tools.%s, indpb=%f)\n", ea.MutationFunction, ea.Indpb)
 	default:
 		return ea.MutationFunction
 	}
@@ -120,7 +133,7 @@ func (ea *EA) selectionFunction() string {
 	case "selTournament":
 		return fmt.Sprintf("toolbox.register(\"select\", tools.%s, tournsize=%d)\n", ea.SelectionFunction, ea.TournamentSize)
 	default:
-		return ea.SelectionFunction
+		return fmt.Sprintf("toolbox.register(\"select\", tools.%s)\n", ea.SelectionFunction)
 	}
 }
 
@@ -171,6 +184,38 @@ func (ea *EA) plots() string {
 	return plots
 }
 
+func (ea *EA) differentialEvolution() string {
+	return strings.Join([]string{
+		fmt.Sprintf("\tCR = %f", ea.CrossOverRate),
+		fmt.Sprintf("F = %f", ea.ScalingFactor),
+		"\n",
+		"logbook = tools.Logbook()",
+		"logbook.header = 'gen', 'evals', 'std', 'min', 'avg', 'max'",
+		"fitnesses = toolbox.map(toolbox.evaluate, pop)",
+		"for ind, fit in zip(pop, fitnesses):",
+		"\tind.fitness.values = fit",
+		"record = stats.compile(pop)",
+		"logbook.record(gen=0, evals=len(pop), **record)",
+		"print(logbook.stream)",
+		"for g in range(1, generations):",
+		"\tfor k, agent in enumerate(pop):",
+		"\t\ta,b,c = toolbox.select(pop, 3)",
+		"\t\ty = toolbox.clone(agent)",
+		"\t\tindex = random.randrange(N)",
+		"\t\tfor i, value in enumerate(agent):",
+		"\t\t\tif i == index or random.random() < CR:",
+		"\t\t\t\ty[i] = a[i] + F*(b[i]-c[i])",
+		"\t\ty.fitness.values = toolbox.evaluate(y)",
+		"\t\tif y.fitness > agent.fitness:",
+		"\t\t\tpop[k] = y",
+		"\thof.update(pop)",
+		"\trecord = stats.compile(pop)",
+		"\tlogbook.record(gen=g, evals=len(pop), **record)",
+		"\tprint(logbook.stream)",
+		"\n",
+	}, "\n\t")
+}
+
 func (ea *EA) Code() (string, error) {
 	if err := ea.validate(); err != nil {
 		return "", err
@@ -209,7 +254,13 @@ func (ea *EA) Code() (string, error) {
 	code += "\tstats.register(\"min\", numpy.min)\n"
 	code += "\tstats.register(\"max\", numpy.max)\n"
 	code += "\n"
-	code += ea.callAlgo() + "\n"
+
+	if ea.Algorithm == "de" {
+		code += ea.differentialEvolution()
+	} else {
+		code += ea.callAlgo() + "\n"
+	}
+
 	code += "\tprint(f'Best individual is: {hof[0]}\\nwith fitness: {hof[0].fitness}')"
 	code += "\n\n"
 	code += ea.plots()
