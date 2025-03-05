@@ -3,22 +3,24 @@ package util
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"fmt"
 	"os"
 	"time"
+
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 func EnqueueRunRequest(ctx context.Context, runID string, fileName string, extension string) error {
+	var logger = NewLogger()
 
 	// Message represents the structure of our message
 	type Message struct {
-		RunId	string	`json:"runId"`
-		FileName	string	`json:"fileName"`
-		Extension	string	`json:"extension"`
-		Timestamp	time.Time	`json:"timestamp"`
+		RunId     string    `json:"runId"`
+		FileName  string    `json:"fileName"`
+		Extension string    `json:"extension"`
+		Timestamp time.Time `json:"timestamp"`
 	}
-	
+
 	// Get RabbitMQ connection string from environment variable or use default
 	rabbitMQURL := os.Getenv("RABBITMQ_URL")
 	if rabbitMQURL == "" {
@@ -28,14 +30,14 @@ func EnqueueRunRequest(ctx context.Context, runID string, fileName string, exten
 	// Connect to RabbitMQ server
 	conn, err := amqp.Dial(rabbitMQURL)
 	if err != nil {
-		log.Fatalf("Failed to connect to RabbitMQ: %v", err)
+		logger.Error(fmt.Sprintf("Failed to connect to RabbitMQ: %v", err))
 	}
 	defer conn.Close()
 
 	// Create a channel
 	ch, err := conn.Channel()
 	if err != nil {
-		log.Fatalf("Failed to open a channel: %v", err)
+		logger.Error(fmt.Sprintf("Failed to open a channel: %v", err))
 	}
 	defer ch.Close()
 
@@ -49,16 +51,15 @@ func EnqueueRunRequest(ctx context.Context, runID string, fileName string, exten
 		false,     // no-wait
 		nil,       // arguments
 	)
-	
-	if err != nil {
-		log.Fatalf("Failed to declare a queue: %v", err)
-	}
 
+	if err != nil {
+		logger.Error(fmt.Sprintf("Failed to declare a queue: %v", err))
+	}
 
 	// Create a new message
 	msg := Message{
-		RunId: runID,
-		FileName: fileName,
+		RunId:     runID,
+		FileName:  fileName,
 		Extension: extension,
 		Timestamp: time.Now(),
 	}
@@ -66,7 +67,7 @@ func EnqueueRunRequest(ctx context.Context, runID string, fileName string, exten
 	// Convert message to JSON
 	body, err := json.Marshal(msg)
 	if err != nil {
-		log.Printf("Error marshaling message: %v", err)
+		logger.Error(fmt.Sprintf("Error marshaling message: %v", err))
 	}
 
 	// Publish message
@@ -77,17 +78,16 @@ func EnqueueRunRequest(ctx context.Context, runID string, fileName string, exten
 		false,  // mandatory
 		false,  // immediate
 		amqp.Publishing{
-			DeliveryMode: amqp.Persistent, 
-			Body: body,
+			DeliveryMode: amqp.Persistent,
+			Body:         body,
 		},
 	)
-			
-	if err != nil {
-		log.Printf("Failed to publish a message: %v", err)
-	}
-	
-	log.Printf("Published message: %s", msg.RunId)
-		
 
+	if err != nil {
+		logger.Error(fmt.Sprintf("Failed to publish message: %v", err))
+		return err
+	}
+
+	logger.Info(fmt.Sprintf("Published message: %s", msg.RunId))
 	return nil
 }

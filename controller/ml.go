@@ -121,7 +121,6 @@ func CreateML(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// TODO: Schedule the run.
 	if err := util.EnqueueRunRequest(req.Context(), runID, "code", "py"); err != nil {
 		util.JSONResponse(res, http.StatusInternalServerError, err.Error(), nil)
 		return

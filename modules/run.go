@@ -9,10 +9,16 @@ import (
 	"time"
 )
 
-type ShareRunReq struct {
-	RunID         string   `json:"runID"`
-	UserEmailList []string `json:"userEmailList"` // List of emails to share the run with.
-}
+type (
+	ShareRunReq struct {
+		RunID         string   `json:"runID"`
+		UserEmailList []string `json:"userEmailList"` // List of emails to share the run with.
+	}
+
+	RunDataReq struct {
+		RunID string `json:"runID"`
+	}
+)
 
 func UserRuns(ctx context.Context, userID string, logger *util.Logger) ([]map[string]string, error) {
 	db, err := connection.PoolConn(ctx)
@@ -154,4 +160,53 @@ func (s *ShareRunReq) ShareRun(ctx context.Context, logger *util.Logger) error {
 	}
 
 	return nil
+}
+
+func RunDataReqFromJSON(jsonData map[string]any) (*RunDataReq, error) {
+	r := &RunDataReq{}
+	jsonDataBytes, err := json.Marshal(jsonData)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := json.Unmarshal(jsonDataBytes, r); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func (r *RunDataReq) UserRun(ctx context.Context, userID string, logger *util.Logger) (map[string]string, error) {
+	db, err := connection.PoolConn(ctx)
+	if err != nil {
+		logger.Error(fmt.Sprintf("RunData: %s", err.Error()))
+		return nil, fmt.Errorf("something went wrong")
+	}
+
+	// Check if user has access to the run.
+	var runID string
+	if err := db.QueryRow(ctx, "SELECT runID FROM access WHERE userID = $1 AND runID = $2", userID, r.RunID).Scan(&runID); err != nil {
+		logger.Error(fmt.Sprintf("RunData.db.QueryRow: %s", err.Error()))
+		return nil, fmt.Errorf("run does not exist")
+	}
+
+	var id, name, description, status, runType, command, createdBy string
+	var createdAt, updatedAt time.Time
+	// Get the run details like name, description, status, type, command, createdBy, createdAt, updatedAt.
+	err = db.QueryRow(ctx, "SELECT id, name, description, status, type, command, createdBy, createdAt, updatedAt FROM run WHERE id = $1", r.RunID).Scan(&id, &name, &description, &status, &runType, &command, &createdBy, &createdAt, &updatedAt)
+	if err != nil {
+		logger.Error(fmt.Sprintf("RunData.db.QueryRow: %s", err.Error()))
+		return nil, fmt.Errorf("something went wrong")
+	}
+
+	return map[string]string{
+		"id":          id,
+		"name":        name,
+		"description": description,
+		"status":      status,
+		"type":        runType,
+		"command":     command,
+		"createdBy":   createdBy,
+		"createdAt":   createdAt.Local().String(),
+		"updatedAt":   updatedAt.Local().String(),
+	}, nil
 }

@@ -35,7 +35,7 @@ func Auth(req *http.Request) (map[string]string, error) {
 	defer authConn.Close()
 
 	authClient := pb.NewAuthenticateClient(authConn)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	r, err := authClient.Auth(ctx, &pb.TokenValidateRequest{Token: token.Value})

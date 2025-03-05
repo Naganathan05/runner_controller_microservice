@@ -22,6 +22,7 @@ export DATABASE_URL=<cockroachdb_url>
 export MINIO_ENDPOINT=<minio_endpoint>
 export MINIO_ACCESS_KEY_ID=<minio_access_key>
 export MINIO_SECRET_KEY=<minio_secret_key>
+export RABBITMQ_URL=<rabbitmq_url>
 ```
 3. Run the following command to start the server.
 ```sh
