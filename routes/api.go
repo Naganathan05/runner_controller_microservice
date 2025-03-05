@@ -12,4 +12,5 @@ const (
 	PSO       = BASE + "/pso"
 	RUNS      = BASE + "/runs"
 	SHARE_RUN = RUNS + "/share"
+	RUN       = RUNS + "/run"
 )

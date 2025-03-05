@@ -22,6 +22,7 @@ func main() {
 	http.HandleFunc(routes.PSO, controller.CreatePSO)
 	http.HandleFunc(routes.RUNS, controller.UserRuns)
 	http.HandleFunc(routes.SHARE_RUN, controller.ShareRun)
+	http.HandleFunc(routes.RUN, controller.UserRun)
 
 	logger.Info(fmt.Sprintf("Test http server on http://localhost%v/api/test", config.PORT))
 

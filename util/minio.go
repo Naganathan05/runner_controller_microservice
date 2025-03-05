@@ -3,9 +3,9 @@ package util
 import (
 	"context"
 	"fmt"
-	"os"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"os"
 )
 
 func UploadFile(ctx context.Context, runID string, fileName string, extension string) error {
