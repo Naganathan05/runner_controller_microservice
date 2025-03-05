@@ -61,13 +61,14 @@ func (ea *EA) validate() error {
 
 func (ea *EA) imports() string {
 	return strings.Join([]string{
-		"import random",
+		"import random, os",
 		"from deap import base, creator, tools, algorithms",
 		"import numpy",
 		"import matplotlib.pyplot as plt",
 		"from functools import reduce",
 		"from scoop import futures",
 		"from deap import benchmarks",
+		"from itertools import chain",
 	}, "\n")
 }
 
@@ -111,11 +112,16 @@ func (ea *EA) initialGenerator() string {
 	case "initRepeat":
 		return fmt.Sprintf("toolbox.register(\"individual\", tools.%s, creator.Individual, toolbox.attr, %d)\n", ea.PopulationFunction, ea.IndividualSize) + fmt.Sprintf("toolbox.register(\"population\", tools.%s, list, toolbox.individual)\n", ea.PopulationFunction)
 	default:
-		return ea.PopulationFunction
+		return fmt.Sprintf("toolbox.register(\"individual\", tools.%s, creator.Individual, toolbox.attr, %d)\n", "initRepeat", ea.IndividualSize) + fmt.Sprintf("toolbox.register(\"population\", tools.%s, list, toolbox.individual)\n", "initRepeat")
 	}
 }
 
 func (ea *EA) mutationFunction() string {
+	// TODO: Remove this later on.
+	if ea.Algorithm == "de" {
+		return fmt.Sprintf("toolbox.register(\"mutate\", mutDE, f=%f)\n", ea.Indpb)
+	}
+
 	// TODO: Add support for more mutation functions.
 	switch ea.MutationFunction {
 	case "mutFlipBit":
@@ -167,7 +173,7 @@ func (ea *EA) plots() string {
 	plots += "\tplt.xlabel(\"Generation\")\n"
 	plots += "\tplt.ylabel(\"Fitness\")\n"
 	plots += "\tplt.legend(loc=\"lower right\")\n"
-	plots += "\tplt.savefig(f\"fitness_plot.png\", dpi=300)\n"
+	plots += "\tplt.savefig(f\"{rootPath}/fitness_plot.png\", dpi=300)\n"
 	plots += "\tplt.close()\n"
 	plots += "\n\n"
 
@@ -179,15 +185,34 @@ func (ea *EA) plots() string {
 	plots += "\tplt.ylabel(\"Fitness Change\")\n"
 	plots += "\tplt.title(\"Effect of Mutation and Crossover on Fitness\")\n"
 	plots += "\tplt.legend()\n"
-	plots += "\tplt.savefig(f\"mutation_crossover_effect.png\", dpi=300)\n"
+	plots += "\tplt.savefig(f\"{rootPath}/mutation_crossover_effect.png\", dpi=300)\n"
 	plots += "\tplt.close()\n"
 	return plots
 }
 
+func (ea *EA) deCrossOverFunctions() string {
+	return strings.Join([]string{
+		"def cxBinomial(x, y, cr):",
+		"\tsize = len(x)",
+		"\tindex = random.randrange(size)",
+		"\tfor i in range(size):",
+		"\t\tif i == index or random.random() < cr:",
+		"\t\t\tx[i] = y[i]",
+		"\treturn x",
+		"\n",
+		"def cxExponential(x, y, cr):",
+		"\tsize = len(x)",
+		"\tindex = random.randrange(size)",
+		"\tfor i in chain(range(index, size), range(0, index)):",
+		"\t\tx[i] = y[i]",
+		"\t\tif random.random() < cr:",
+		"\t\t\tbreak",
+		"\treturn x",
+	}, "\n")
+}
+
 func (ea *EA) differentialEvolution() string {
 	return strings.Join([]string{
-		fmt.Sprintf("\tCR = %f", ea.CrossOverRate),
-		fmt.Sprintf("F = %f", ea.ScalingFactor),
 		"\n",
 		"logbook = tools.Logbook()",
 		"logbook.header = 'gen', 'evals', 'std', 'min', 'avg', 'max'",
@@ -198,22 +223,99 @@ func (ea *EA) differentialEvolution() string {
 		"logbook.record(gen=0, evals=len(pop), **record)",
 		"print(logbook.stream)",
 		"for g in range(1, generations):",
-		"\tfor k, agent in enumerate(pop):",
-		"\t\ta,b,c = toolbox.select(pop, 3)",
+		"\tchildren = []",
+		"\tfor agent in pop:",
+		"\t\ta, b, c = [toolbox.clone(ind) for ind in toolbox.select(pop, 3)]",
+		"\t\tx = toolbox.clone(agent)",
 		"\t\ty = toolbox.clone(agent)",
-		"\t\tindex = random.randrange(N)",
-		"\t\tfor i, value in enumerate(agent):",
-		"\t\t\tif i == index or random.random() < CR:",
-		"\t\t\t\ty[i] = a[i] + F*(b[i]-c[i])",
-		"\t\ty.fitness.values = toolbox.evaluate(y)",
-		"\t\tif y.fitness > agent.fitness:",
-		"\t\t\tpop[k] = y",
+		"\t\ty = toolbox.mutate(y, a, b, c)",
+		"\t\tz = toolbox.mate(x, y)",
+		"\t\tdel z.fitness.values",
+		"\t\tchildren.append(z)",
+		"\n",
+		"\tfitnesses = toolbox.map(toolbox.evaluate, children)",
+		"\tfor (i, ind), fit in zip(enumerate(children), fitnesses):",
+		"\t\tind.fitness.values = fit",
+		"\t\tif ind.fitness > pop[i].fitness:",
+		"\t\t\tpop[i] = ind",
+		"\n",
 		"\thof.update(pop)",
 		"\trecord = stats.compile(pop)",
 		"\tlogbook.record(gen=g, evals=len(pop), **record)",
 		"\tprint(logbook.stream)",
-		"\n",
 	}, "\n\t")
+}
+
+func (ea *EA) deMutationFunction() string {
+	switch ea.MutationFunction {
+	case "DE/rand/1":
+		return strings.Join([]string{
+			"def mutDE(y, a, b, c, f):",
+			"\tsize = len(y)",
+			"\tfor i in range(len(y)):",
+			"\t\ty[i] = a[i] + f*(b[i]-c[i])",
+			"\treturn y",
+		}, "\n")
+	case "DE/rand/2":
+		return strings.Join([]string{
+			"def mutDE_rand2(y, a, b, c, d, e, f):",
+			"\tsize = len(y)",
+			"\tfor i in range(size):",
+			"\t\ty[i] = a[i] + f * (b[i] - c[i]) + f * (d[i] - e[i])",
+			"\treturn y",
+		}, "\n")
+	case "DE/best/1":
+		return strings.Join([]string{
+			"def mutDE_best1(y, best, b, c, f):",
+			"\tsize = len(y)",
+			"\tfor i in range(size):",
+			"\t\ty[i] = best[i] + f * (b[i] - c[i])",
+			"\treturn y",
+		}, "\n")
+	case "DE/best/2":
+		return strings.Join([]string{
+			"def mutDE_best2(y, best, b, c, d, e, f):",
+			"\tsize = len(y)",
+			"\tfor i in range(size):",
+			"\t\ty[i] = best[i] + f * (b[i] - c[i]) + f * (d[i] - e[i])",
+			"\treturn y",
+		}, "\n")
+	case "DE/current-to-best/1":
+		return strings.Join([]string{
+			"def mutDE_current_to_best1(y, x, best, b, c, f):",
+			"\tsize = len(y)",
+			"\tfor i in range(size):",
+			"\t\ty[i] = x[i] + f * (best[i] - x[i]) + f * (b[i] - c[i])",
+			"\treturn y",
+		}, "\n")
+	case "DE/current-to-rand/1":
+		return strings.Join([]string{
+			"def mutDE_current_to_rand1(y, x, a, b, c, f):",
+			"\tsize = len(y)",
+			"\tK = random.uniform(0, 1)  # Random number in [0, 1]",
+			"\tfor i in range(size):",
+			"\t\ty[i] = x[i] + K * (a[i] - x[i]) + f * (b[i] - c[i])",
+			"\treturn y",
+		}, "\n")
+	case "DE/rand-to-best/1":
+		return strings.Join([]string{
+			"def mutDE_rand_to_best1(y, a, best, b, c, f):",
+			"\tsize = len(y)",
+			"\tfor i in range(size):",
+			"\t\ty[i] = a[i] + f * (best[i] - a[i]) + f * (b[i] - c[i])",
+			"\treturn y",
+		}, "\n")
+	default:
+		return strings.Join([]string{
+			"def mutDE(y, a, b, c, f):",
+			"\tsize = len(y)",
+			"\tfor i in range(len(y)):",
+			"\t\ty[i] = a[i] + f*(b[i]-c[i])",
+			"\treturn y",
+		}, "\n")
+
+	}
+
 }
 
 func (ea *EA) Code() (string, error) {
@@ -224,6 +326,19 @@ func (ea *EA) Code() (string, error) {
 	var code string
 	code += ea.imports() + "\n\n"
 	code += ea.evalFunction() + "\n\n"
+
+	if ea.Algorithm == "de" {
+		code += strings.Join([]string{
+			"def mutDE(y, a, b, c, f):",
+			"\tsize = len(y)",
+			"\tfor i in range(len(y)):",
+			"\t\ty[i] = a[i] + f*(b[i]-c[i])",
+			"\treturn y",
+		}, "\n") + "\n\n"
+		code += ea.deMutationFunction() + "\n\n"
+	}
+
+	code += ea.deCrossOverFunctions() + "\n\n"
 	code += ea.CustomPop + "\n"
 	code += ea.CustomMutation + "\n"
 	code += ea.CustomSelection + "\n\n"
@@ -237,7 +352,14 @@ func (ea *EA) Code() (string, error) {
 	code += ea.initialGenerator() + "\n"
 	code += fmt.Sprintf("toolbox.register(\"evaluate\", %s)\n", ea.EvaluationFunction)
 	code += ea.mutationFunction() + "\n"
-	code += fmt.Sprintf("toolbox.register(\"mate\", tools.%s)\n", ea.CrossoverFunction)
+
+	if ea.Algorithm == "de" {
+		code += fmt.Sprintf("CR = %f\n", ea.CrossOverRate)
+		code += fmt.Sprintf("F = %f\n", ea.ScalingFactor)
+		code += fmt.Sprintf("toolbox.register(\"mate\", %s, cr=CR)\n", ea.CrossoverFunction)
+	} else {
+		code += fmt.Sprintf("toolbox.register(\"mate\", tools.%s)\n", ea.CrossoverFunction)
+	}
 	code += ea.selectionFunction() + "\n"
 	code += "\ntoolbox.register(\"map\", futures.map)\n\n"
 
@@ -261,7 +383,17 @@ func (ea *EA) Code() (string, error) {
 		code += ea.callAlgo() + "\n"
 	}
 
-	code += "\tprint(f'Best individual is: {hof[0]}\\nwith fitness: {hof[0].fitness}')"
+	code += "\n\trootPath = os.path.dirname(os.path.abspath(__file__))\n"
+	code += "\twith open(f\"{rootPath}/logbook.txt\", \"w\") as f:\n"
+	code += "\t\tf.write(str(logbook))\n"
+	code += "\n"
+
+	// Write best individual to file.
+	code += "\tout_file = open(f\"{rootPath}/best.txt\", \"w\")\n"
+	code += "\tout_file.write(f\"Best individual fitness: {hof[0].fitness.values}\\n\")\n"
+	code += "\n"
+	code += "\tout_file.write(f\"Best individual: {hof[0]}\\n\")\n"
+	code += "\tout_file.close()\n"
 	code += "\n\n"
 	code += ea.plots()
 	code += "\n\n"
