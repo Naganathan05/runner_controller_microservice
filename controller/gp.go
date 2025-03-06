@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"time"
 )
 
 func CreateGP(res http.ResponseWriter, req *http.Request) {
@@ -31,13 +30,13 @@ func CreateGP(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	ea, err := modules.GPFromJSON(data)
+	gp, err := modules.GPFromJSON(data)
 	if err != nil {
 		util.JSONResponse(res, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
 
-	code, err := ea.Code()
+	code, err := gp.Code()
 	if err != nil {
 		util.JSONResponse(res, http.StatusBadRequest, err.Error(), nil)
 		return
@@ -54,7 +53,7 @@ func CreateGP(res http.ResponseWriter, req *http.Request) {
 		INSERT INTO run (name, description, type, command, createdBy)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id
-	`, time.Now().Local().String(), "Genetic Programming (GP)", "gp", "python -m scoop code.py", user["id"])
+	`, fmt.Sprintf("%d-%d", gp.Generations, gp.PopulationSize), "Genetic Programming (GP)", "gp", "python -m scoop code.py", user["id"])
 
 	var runID string
 	err = row.Scan(&runID)
@@ -126,5 +125,6 @@ func CreateGP(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	data["runID"] = runID
 	util.JSONResponse(res, http.StatusOK, "It works! 👍🏻", data)
 }
