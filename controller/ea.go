@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"time"
 )
 
 func CreateEA(res http.ResponseWriter, req *http.Request) {
@@ -50,11 +49,18 @@ func CreateEA(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	var description string
+	if ea.Algorithm == "de" {
+		description = "Differential Evolution (DE)"
+	} else {
+		description = "Evolutionary Algorithm (EA)"
+	}
+
 	row := db.QueryRow(req.Context(), `
 		INSERT INTO run (name, description, type, command, createdBy)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id
-	`, time.Now().Local().String(), "Traditional EA Without GP", "ea", "python -m scoop code.py", user["id"])
+	`, fmt.Sprintf("%d-%d", ea.Generations, ea.PopulationSize), description, "ea", "python -m scoop code.py", user["id"])
 
 	var runID string
 	err = row.Scan(&runID)
@@ -126,6 +132,7 @@ func CreateEA(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	data["runID"] = runID
 	util.JSONResponse(res, http.StatusOK, "It works! 👍🏻", data)
 
 }

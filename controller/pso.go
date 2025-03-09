@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"time"
 )
 
 func CreatePSO(res http.ResponseWriter, req *http.Request) {
@@ -54,7 +53,7 @@ func CreatePSO(res http.ResponseWriter, req *http.Request) {
 		INSERT INTO run (name, description, type, command, createdBy)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id
-	`, time.Now().Local().String(), "Particle Swarm Optimization", "pso", "python code.py", user["id"])
+	`, fmt.Sprintf("%d-%d", pso.Generations, pso.PopulationSize), "Particle Swarm Optimization", "pso", "python code.py", user["id"])
 
 	var runID string
 	err = row.Scan(&runID)
@@ -126,5 +125,6 @@ func CreatePSO(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	data["runID"] = runID
 	util.JSONResponse(res, http.StatusOK, "It works! 👍🏻", data)
 }
