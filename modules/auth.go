@@ -2,11 +2,13 @@ package modules
 
 import (
 	"context"
-	"evolve/config"
 	pb "evolve/proto"
 	"evolve/util"
 	"fmt"
 	"net/http"
+	"os"
+
+	// "os"
 	"time"
 
 	"google.golang.org/grpc"
@@ -27,7 +29,7 @@ func Auth(req *http.Request) (map[string]string, error) {
 
 	// Verify the token via a gRPC call
 	// to the auth micro-service.
-	authConn, err := grpc.NewClient(config.AUTH_GRPC_ADDRESS, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	authConn, err := grpc.NewClient(os.Getenv("AUTH_GRPC_ADDRESS"), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		logger.Error(fmt.Sprintf("Failed to create gRPC client: %v", err))
 		return nil, fmt.Errorf("something went wrong")
@@ -35,7 +37,7 @@ func Auth(req *http.Request) (map[string]string, error) {
 	defer authConn.Close()
 
 	authClient := pb.NewAuthenticateClient(authConn)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	r, err := authClient.Auth(ctx, &pb.TokenValidateRequest{Token: token.Value})
