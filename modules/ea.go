@@ -55,6 +55,14 @@ func (ea *EA) validate() error {
 	if err := util.ValidateAlgorithmName(ea.Algorithm); err != nil {
 		return err
 	}
+
+	// If randomrange not given or invalid, set to default.
+	if len(ea.RandomRange) != 2 {
+		ea.RandomRange = []float64{1, 5}
+	} else if ea.RandomRange[0] >= ea.RandomRange[1] {
+		ea.RandomRange = []float64{1, 5}
+	}
+
 	// TODO: Validate remaining fields.
 	return nil
 }
@@ -100,7 +108,7 @@ func (ea *EA) registerIndividual() string {
 	case "floatingpoint":
 		return fmt.Sprintf("toolbox.register(\"attr\", random.uniform, %f, %f)\n", ea.RandomRange[0], ea.RandomRange[1])
 	case "integer":
-		return fmt.Sprintf("toolbox.register(\"attr\", random.randint, %f, %f)\n", ea.RandomRange[0], ea.RandomRange[1])
+		return fmt.Sprintf("toolbox.register(\"attr\", random.randint, %d, %d)\n", int(ea.RandomRange[0]), int(ea.RandomRange[1]))
 	default:
 		return ""
 	}
@@ -188,6 +196,17 @@ func (ea *EA) plots() string {
 	plots += "\tplt.savefig(f\"{rootPath}/mutation_crossover_effect.png\", dpi=300)\n"
 	plots += "\tplt.close()\n"
 	return plots
+}
+
+func (ea *EA) crossoverFunction() string {
+	switch ea.CrossoverFunction {
+	case "cxUniform":
+		return fmt.Sprintf("toolbox.register(\"mate\", tools.%s, indpb=%f)\n", ea.CrossoverFunction, ea.Indpb)
+	case "cxUniformPartialyMatched":
+		return fmt.Sprintf("toolbox.register(\"mate\", tools.%s, indpb=%f)\n", ea.CrossoverFunction, ea.Indpb)
+	default:
+		return fmt.Sprintf("toolbox.register(\"mate\", tools.%s)\n", ea.CrossoverFunction)
+	}
 }
 
 func (ea *EA) deCrossOverFunctions() string {
@@ -336,9 +355,9 @@ func (ea *EA) Code() (string, error) {
 			"\treturn y",
 		}, "\n") + "\n\n"
 		code += ea.deMutationFunction() + "\n\n"
+		code += ea.deCrossOverFunctions() + "\n\n"
 	}
 
-	code += ea.deCrossOverFunctions() + "\n\n"
 	code += ea.CustomPop + "\n"
 	code += ea.CustomMutation + "\n"
 	code += ea.CustomSelection + "\n\n"
@@ -358,7 +377,7 @@ func (ea *EA) Code() (string, error) {
 		code += fmt.Sprintf("F = %f\n", ea.ScalingFactor)
 		code += fmt.Sprintf("toolbox.register(\"mate\", %s, cr=CR)\n", ea.CrossoverFunction)
 	} else {
-		code += fmt.Sprintf("toolbox.register(\"mate\", tools.%s)\n", ea.CrossoverFunction)
+		code += ea.crossoverFunction() + "\n"
 	}
 	code += ea.selectionFunction() + "\n"
 	code += "\ntoolbox.register(\"map\", futures.map)\n\n"
