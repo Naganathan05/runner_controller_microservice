@@ -1,10 +1,12 @@
   
 services:
   runner_controller:
-    # image: ghcr.io/evolutionary-algorithms-on-click/runner_controller_microservice:main
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/evolutionary-algorithms-on-click/runner_controller_microservice:main
+    # Comment the above line and uncomment the following lines 
+    # to build the image from the Dockerfile locally.
+    # build: 
+    #   context: .
+    #   dockerfile: Dockerfile
     ports:
       - "5002:5002"
     environment:
