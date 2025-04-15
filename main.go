@@ -41,7 +41,7 @@ func main() {
 		AllowedHeaders:   []string{"*"},
 		AllowCredentials: true,
 	}).Handler(http.DefaultServeMux)
-	if err := http.ListenAndServe("0.0.0.0"+PORT, corsHandler); err != nil {
+	if err := http.ListenAndServe(PORT, corsHandler); err != nil {
 		logger.Error(fmt.Sprintf("Failed to start server: %v", err))
 		return
 	}
