@@ -148,7 +148,7 @@ func (gp *GP) crossoverFunction() string {
 	case "cxOnePointLeafBiased":
 		return fmt.Sprintf("toolbox.register('mate', gp.cxOnePointLeafBiased, termpb=%v)\n", gp.TerminalProb)
 	case "cxSemantic":
-		return "toolbox.register('mate', gp.cxSemantic, gen_func=toolbox.genFull, pset=pset)\n"
+		return "toolbox.register('mate', gp.cxSemantic, gen_func=gp.genFull, pset=pset)\n"
 	default:
 		return "toolbox.register('mate', gp.cxOnePoint)\n"
 	}

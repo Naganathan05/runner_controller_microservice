@@ -1,10 +1,7 @@
-  
 services:
   runner_controller:
     image: ghcr.io/evolutionary-algorithms-on-click/runner_controller_microservice:main
-    # Comment the above line and uncomment the following lines 
-    # to build the image from the Dockerfile locally.
-    # build: 
+    # build:
     #   context: .
     #   dockerfile: Dockerfile
     ports:
@@ -12,8 +9,8 @@ services:
     environment:
       DATABASE_URL : postgresql://root@host.docker.internal:26257/defaultdb?sslmode=disable
       MINIO_ENDPOINT : host.docker.internal:9000
-      MINIO_ACCESS_KEY_ID : <MINIO_ACCESS_KEY_ID>
-      MINIO_SECRET_KEY : <MINIO_SECRET_KEY>
+      MINIO_ACCESS_KEY_ID : minioadmin
+      MINIO_SECRET_KEY : minioadmin
       RABBITMQ_URL : amqp://user:password@host.docker.internal:5672/
       FRONTEND_URL : http://localhost:3000
       HTTP_PORT : 5002
