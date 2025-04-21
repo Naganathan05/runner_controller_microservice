@@ -17,6 +17,7 @@ const (
 	logDir       = "live"     // Directory where <runId>.str files are stored.
 	runIdHeader  = "X-RUN-ID" // Header key for the run ID.
 	retrySeconds = 3          // SSE retry interval suggestion for clients.
+	sseDoneEvent = "done"     // Event name for the end of the stream.
 )
 
 // GetSSEHandler creates and returns an http.HandlerFunc for the SSE endpoint.
@@ -127,8 +128,19 @@ func serveSSE(logger util.Logger, w http.ResponseWriter, r *http.Request) {
 
 			// ---> CHECK FOR END MARKER <---
 			if line.Text == "__END__" {
-				logger.Info(fmt.Sprintf("[SSE Handler] Detected END marker for run %s. Closing stream.", runId))
-				return
+				logger.Info(fmt.Sprintf("[SSE Handler] Detected END marker for run %s. Sending '%s' event and closing stream.", runId, sseDoneEvent))
+				// Send the specific "done" event
+				_, writeErr := fmt.Fprintf(w, "event: %s\ndata: {\"message\": \"Stream ended.\"}\n\n", sseDoneEvent)
+				if writeErr != nil {
+					// Log error but still attempt to flush and return
+					logger.Warn(fmt.Sprintf("[SSE Handler] Error writing '%s' event for runId %s: %v", sseDoneEvent, runId, writeErr))
+				}
+				// Attempt to flush the final event
+				if err := rc.Flush(); err != nil {
+					logger.Error(fmt.Sprintf("[SSE Handler] Error flushing final event for runId %s: %v", runId, err))
+					return // Exit handler, defer will stop tailer
+				}
+				return // <<< EXIT HANDLER HERE after sending event
 			}
 
 			// Format and send SSE message
