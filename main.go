@@ -36,15 +36,15 @@ func main() {
 
 	var logger = util.NewLogger()
 
-	// ---- Context and Graceful Shutdown Setup ----
+	// Context and Graceful Shutdown Setup.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// ---- Start WebSocket Server ----
+	// Start WebSocket Server.
 	wsHub := ws.StartServer(ctx, *logger)
 	logger.Info("WebSocket Hub started.")
 
-	// ---- Register HTTP Routes ----
+	// Register HTTP Routes.
 	mux := http.DefaultServeMux
 
 	mux.HandleFunc(routes.TEST, controller.Test)
@@ -56,38 +56,38 @@ func main() {
 	mux.HandleFunc(routes.SHARE_RUN, controller.ShareRun)
 	mux.HandleFunc(routes.RUN, controller.UserRun)
 
-	// WebSocket Route
+	// WebSocket Route.
 	wsHandler := ws.GetHandler(ctx, wsHub, *logger)
 	mux.HandleFunc(routes.LIVE, wsHandler)
 	logger.Info("WebSocket endpoint registered at /live/")
 
-	// ---- SSE Route ----
+	// SSE Route.
 	sseHandler := sse.GetSSEHandler(*logger)
 	mux.HandleFunc(routes.LOGS, sseHandler)
 	logger.Info("SSE endpoint registered at /runs/logs/")
 
-	// ---- Log the test endpoint URL ----
+	// Log the test endpoint URL.
 	logger.Info(fmt.Sprintf("Test http server on http://localhost%s/api/test", PORT))
 
-	// ---- CORS Configuration ----
+	// CORS Configuration.
 	corsHandler := cors.New(cors.Options{
 		AllowedOrigins:   []string{FRONTEND_URL},
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}, // Ensure GET is allowed for SSE
-		AllowedHeaders:   []string{"*"},                                       // Allow X-RUN-ID header
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"*"},
 		AllowCredentials: true,
 	}).Handler(mux)
 
-	// ---- HTTP Server Setup and Start ----
+	// HTTP Server Setup and Start.
 	server := &http.Server{
 		Addr:         PORT,
 		Handler:      corsHandler,
 		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 0, // Set WriteTimeout to 0 for long-lived SSE connections
-		IdleTimeout:  0, // Set IdleTimeout to 0 for long-lived SSE connections
+		WriteTimeout: 0, // Set WriteTimeout to 0 for long-lived SSE connections.
+		IdleTimeout:  0, // Set IdleTimeout to 0 for long-lived SSE connections.
 		BaseContext:  func(_ net.Listener) context.Context { return ctx },
 	}
 
-	// Start server in a goroutine
+	// Start server in a goroutine.
 	go func() {
 		logger.Info(fmt.Sprintf("HTTP server starting on %s (Frontend: %s)", server.Addr, FRONTEND_URL))
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -96,10 +96,10 @@ func main() {
 		}
 	}()
 
-	// ---- Wait for Shutdown Signal ----
+	// Wait for Shutdown Signal.
 	<-ctx.Done()
 
-	// ---- Initiate Graceful Shutdown ----
+	// Initiate Graceful Shutdown.
 	logger.Info("Shutdown signal received. Starting graceful shutdown...")
 
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)

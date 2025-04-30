@@ -1,4 +1,3 @@
-// Package ws provides WebSocket server functionality for live updates.
 package ws
 
 import (
@@ -18,9 +17,12 @@ import (
 	"github.com/coder/websocket"
 )
 
+const liveLogDir = "live"
+
 var globalHub *Hub
 
-// Hub remains the same
+// Hub maintains the set of active clients
+// and broadcasts messages to them.
 type Hub struct {
 	runs       map[string]map[*websocket.Conn]bool
 	broadcast  chan *message
@@ -29,20 +31,19 @@ type Hub struct {
 	mu         sync.RWMutex
 }
 
-// message remains the same
+// message represents a message sent to the hub.
 type message struct {
 	runId   string
 	payload []byte
 	sender  *websocket.Conn
 }
 
-// client remains the same
+// client represents a WebSocket client.
 type client struct {
 	runId string
 	conn  *websocket.Conn
 }
 
-// newHub remains the same
 func newHub() *Hub {
 	return &Hub{
 		broadcast:  make(chan *message),
@@ -148,7 +149,7 @@ func serveWsInternal(ctx context.Context, hub *Hub, logger util.Logger, w http.R
 
 	select {
 	case hub.register <- client:
-		// Success
+		logger.Info(fmt.Sprintf("[WS Handler] Client registered for run %s", runId))
 	case <-ctx.Done():
 		logger.Warn(fmt.Sprintf("[WS Handler] Server shutting down, closing new connection for run %s", runId))
 		conn.Close(websocket.StatusGoingAway, "Server shutting down")
@@ -161,9 +162,6 @@ func serveWsInternal(ctx context.Context, hub *Hub, logger util.Logger, w http.R
 
 	go readPump(ctx, hub, client, logger)
 }
-
-// --- Directory for live logs ---
-const liveLogDir = "live"
 
 // readPump pumps messages from the websocket connection to the hub AND writes to log file.
 func readPump(ctx context.Context, hub *Hub, c *client, logger util.Logger) {
@@ -196,15 +194,13 @@ func readPump(ctx context.Context, hub *Hub, c *client, logger util.Logger) {
 		}
 
 		if messageType == websocket.MessageText {
-			// ---- START: Log message to file ----
 			err := logMessageToFile(c.runId, payload, logger)
 			if err != nil {
-				// Log the error but continue processing (broadcasting) the message
+				// Log the error but continue processing (broadcasting) the message.
 				logger.Error(fmt.Sprintf("[WS LogToFile] Failed for run %s: %v", c.runId, err))
 			}
-			// ---- END: Log message to file ----
 
-			// Still broadcast the message
+			// Broadcast the message.
 			msg := &message{runId: c.runId, payload: payload, sender: c.conn}
 			select {
 			case hub.broadcast <- msg:
@@ -238,7 +234,6 @@ func logMessageToFile(runId string, payload []byte, logger util.Logger) error {
 	// Ensure file is closed even if errors occur during write.
 	defer func() {
 		if cerr := file.Close(); cerr != nil {
-			// Log the close error, but don't overwrite the primary write error (if any).
 			logger.Error(fmt.Sprintf("[WS LogToFile] Error closing file '%s': %v", filePath, cerr))
 		}
 	}()
@@ -252,7 +247,7 @@ func logMessageToFile(runId string, payload []byte, logger util.Logger) error {
 
 	// logger.Info(fmt.Sprintf("[WS LogToFile] Appended message to %s", filePath))
 
-	return nil // Success
+	return nil
 }
 
 // StartServer initializes and runs the central WebSocket Hub.
