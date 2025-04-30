@@ -1,0 +1,280 @@
+<!-- This was Vibe-coded for quick debugging and testing purposes. -->
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Live Log Viewer (SSE)</title>
+        <style>
+            body {
+                font-family: sans-serif;
+                margin: 20px;
+                background-color: #f4f4f4;
+            }
+            .container {
+                background-color: #fff;
+                padding: 20px;
+                border-radius: 5px;
+                box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            }
+            label {
+                display: block;
+                margin-bottom: 5px;
+                font-weight: bold;
+            }
+            input[type="text"] {
+                padding: 8px;
+                margin-bottom: 15px;
+                border: 1px solid #ccc;
+                border-radius: 3px;
+                width: 300px;
+            }
+            button {
+                padding: 10px 15px;
+                margin-right: 10px;
+                border: none;
+                border-radius: 3px;
+                cursor: pointer;
+                background-color: #007bff;
+                color: white;
+                font-size: 1em;
+            }
+            button:disabled {
+                background-color: #cccccc;
+                cursor: not-allowed;
+            }
+            #disconnectBtn {
+                background-color: #dc3545;
+            }
+            #disconnectBtn:disabled {
+                background-color: #cccccc;
+            }
+            #logOutput {
+                margin-top: 20px;
+                padding: 15px;
+                border: 1px solid #e0e0e0;
+                background-color: #282c34; /* Dark background */
+                color: #abb2bf; /* Light text */
+                height: 500px;
+                overflow-y: scroll;
+                white-space: pre-wrap; /* Wrap long lines, preserve whitespace */
+                font-family: "Courier New", Courier, monospace;
+                font-size: 0.9em;
+                border-radius: 3px;
+            }
+            #status {
+                margin-top: 15px;
+                font-style: italic;
+                color: #555;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Live Log Viewer (SSE)</h1>
+
+            <div>
+                <label for="runIdInput">Run ID:</label>
+                <input
+                    type="text"
+                    id="runIdInput"
+                    placeholder="Enter the Run ID"
+                />
+            </div>
+
+            <div>
+                <button id="connectBtn">Connect</button>
+                <button id="disconnectBtn" disabled>Disconnect</button>
+            </div>
+
+            <div id="status">Status: Disconnected</div>
+
+            <h2>Logs</h2>
+            <pre id="logOutput"></pre>
+        </div>
+
+        <script>
+            const runIdInput = document.getElementById("runIdInput");
+            const connectBtn = document.getElementById("connectBtn");
+            const disconnectBtn = document.getElementById("disconnectBtn");
+            const logOutput = document.getElementById("logOutput");
+            const statusDiv = document.getElementById("status");
+
+            // Use AbortController to allow canceling the fetch request
+            let abortController = null;
+
+            function appendLog(message) {
+                logOutput.textContent += message + "\n";
+                // Auto-scroll to the bottom
+                logOutput.scrollTop = logOutput.scrollHeight;
+            }
+
+            function setStatus(message) {
+                statusDiv.textContent = `Status: ${message}`;
+            }
+
+            async function connect() {
+                const runId = runIdInput.value.trim();
+                if (!runId) {
+                    alert("Please enter a Run ID.");
+                    return;
+                }
+
+                if (abortController) {
+                    console.log("Already connected or connecting.");
+                    return; // Already connected or attempting connection
+                }
+
+                logOutput.textContent = ""; // Clear previous logs
+                setStatus(`Connecting to Run ID: ${runId}...`);
+                connectBtn.disabled = true;
+
+                abortController = new AbortController();
+                const signal = abortController.signal;
+
+                try {
+                    const response = await fetch(
+                        "http://localhost:5002/api/runs/logs",
+                        {
+                            // Adjust URL if needed
+                            method: "GET",
+                            headers: {
+                                "X-RUN-ID": runId,
+                                Accept: "text/event-stream",
+                            },
+                            signal: signal, // Pass the signal to fetch
+                        }
+                    );
+
+                    if (!response.ok) {
+                        throw new Error(
+                            `HTTP error! status: ${response.status} ${response.statusText}`
+                        );
+                    }
+
+                    if (!response.body) {
+                        throw new Error("Response body is null");
+                    }
+
+                    setStatus(
+                        `Connected to Run ID: ${runId}. Waiting for logs...`
+                    );
+                    disconnectBtn.disabled = false;
+
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = ""; // Buffer to handle partial messages
+
+                    // Function to process stream chunks
+                    function processStream({ done, value }) {
+                        if (done) {
+                            console.log("Stream finished.");
+                            if (!signal.aborted) {
+                                // Don't show disconnected if user aborted
+                                setStatus(
+                                    `Stream closed by server for Run ID: ${runId}`
+                                );
+                                disconnect(); // Clean up UI
+                            }
+                            return;
+                        }
+
+                        // Decode chunk and add to buffer
+                        buffer += decoder.decode(value, { stream: true });
+
+                        // Process buffer line by line (SSE messages end with \n\n)
+                        let boundaryIndex;
+                        while ((boundaryIndex = buffer.indexOf("\n\n")) >= 0) {
+                            const message = buffer
+                                .slice(0, boundaryIndex)
+                                .trim();
+                            buffer = buffer.slice(boundaryIndex + 2); // Remove message + \n\n
+
+                            if (message.startsWith("data: ")) {
+                                const data = message.substring(6).trim(); // Get content after "data: "
+                                appendLog(data);
+                            } else if (message.startsWith("retry: ")) {
+                                // Optional: handle retry directive if needed
+                                console.log(
+                                    "Server suggested retry interval:",
+                                    message.substring(7).trim()
+                                );
+                            } else if (message) {
+                                // Handle comments (starting with ':') or other event types if necessary
+                                console.log("Received raw SSE line:", message);
+                            }
+                        }
+
+                        // Read the next chunk
+                        reader
+                            .read()
+                            .then(processStream)
+                            .catch((error) => {
+                                if (error.name === "AbortError") {
+                                    console.log("Fetch aborted by user.");
+                                    // Status already set in disconnect()
+                                } else {
+                                    console.error(
+                                        "Error reading stream:",
+                                        error
+                                    );
+                                    setStatus(
+                                        `Error reading stream for Run ID: ${runId} - ${error.message}`
+                                    );
+                                    disconnect(); // Clean up UI on error
+                                }
+                            });
+                    }
+
+                    // Start reading the stream
+                    reader
+                        .read()
+                        .then(processStream)
+                        .catch((error) => {
+                            if (error.name === "AbortError") {
+                                console.log("Fetch aborted by user.");
+                                // Status already set in disconnect()
+                            } else {
+                                console.error(
+                                    "Error starting stream read:",
+                                    error
+                                );
+                                setStatus(
+                                    `Error starting stream read for Run ID: ${runId} - ${error.message}`
+                                );
+                                disconnect(); // Clean up UI on error
+                            }
+                        });
+                } catch (error) {
+                    if (error.name === "AbortError") {
+                        console.log("Connection attempt aborted.");
+                        setStatus("Connection attempt cancelled.");
+                    } else {
+                        console.error("Failed to connect:", error);
+                        setStatus(`Connection Failed: ${error.message}`);
+                    }
+                    connectBtn.disabled = false; // Re-enable connect button on failure
+                    disconnectBtn.disabled = true;
+                    abortController = null; // Clear controller on failure
+                }
+            }
+
+            function disconnect() {
+                if (abortController) {
+                    abortController.abort(); // Send abort signal to fetch
+                    console.log("Connection aborted.");
+                    setStatus("Disconnected");
+                } else {
+                    console.log("Not connected.");
+                }
+                // Reset UI state
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+                abortController = null; // Clear the controller
+            }
+
+            connectBtn.addEventListener("click", connect);
+            disconnectBtn.addEventListener("click", disconnect);
+        </script>
+    </body>
+</html>

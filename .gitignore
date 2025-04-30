@@ -26,5 +26,6 @@ go.work.sum
 *.py
 code/
 input/
+live/
 
 .DS_Store

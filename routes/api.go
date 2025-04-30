@@ -2,6 +2,7 @@ package routes
 
 const (
 	BASE = "/api"
+	LIVE = "/live/"
 )
 
 const (
@@ -13,4 +14,5 @@ const (
 	RUNS      = BASE + "/runs"
 	SHARE_RUN = RUNS + "/share"
 	RUN       = RUNS + "/run"
+	LOGS      = RUNS + "/logs"
 )
