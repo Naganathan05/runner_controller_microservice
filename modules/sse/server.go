@@ -1,55 +1,124 @@
 package sse
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"evolve/util"
 	"fmt"
-	"io"
 	"net/http"
-	"path/filepath"
+	"os"
 	"strings"
 	"time"
 
-	"github.com/hpcloud/tail"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
-	logDir       = "live"     // Directory where <runId>.str files are stored.
-	runIdHeader  = "X-RUN-ID" // Header key for the run ID.
-	retrySeconds = 3          // SSE retry interval suggestion for clients.
-	sseDoneEvent = "done"     // Event name for the end of the stream.
+	runIdHeader     = "X-RUN-ID"      // Header key for the run ID.
+	retrySeconds    = 3               // SSE retry interval suggestion for clients.
+	sseDoneEvent    = "done"          // Event name for the end of the stream.
+	eofStatus       = "EOF"           // Expected status value for the end message.
+	logDataField    = "log_data"      // Field name in Redis Stream (must match 'runner').
+	streamReadCount = 100             // How many messages to read per XREAD call.
+	blockTimeout    = 5 * time.Second // Block timeout for XREAD waiting for new messages.
 )
 
-// GetSSEHandler creates and returns an
-// http.HandlerFunc for the SSE endpoint.
-func GetSSEHandler(logger util.Logger) http.HandlerFunc {
+// redisLogPayload represents the structure
+// of the log data from Redis.
+type redisLogPayload struct {
+	Stream string `json:"stream"` // stdout or stderr.
+	Line   string `json:"line"`
+	Status string `json:"status"` // Check for EOF status here.
+	RunID  string `json:"runId"`  // From EOF message.
+}
+
+// GetRedisClient initializes a Redis client.
+func GetRedisClient(logger util.Logger) (*redis.Client, error) {
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		redisURL = "redis://localhost:6379/0"
+		logger.Warn(fmt.Sprintf("REDIS_URL not set, using default: %s", redisURL))
+	}
+	opts, err := redis.ParseURL(redisURL)
+	if err != nil {
+		logger.Error(fmt.Sprintf("Failed to parse REDIS_URL '%s': %v", redisURL, err))
+		return nil, err
+	}
+	rdb := redis.NewClient(opts)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err = rdb.Ping(ctx).Result()
+	if err != nil {
+		logger.Error(fmt.Sprintf("Failed to connect to Redis at %s: %v", opts.Addr, err))
+		return nil, err
+	}
+	logger.Info(fmt.Sprintf("Successfully connected to Redis at %s", opts.Addr))
+	return rdb, nil
+}
+
+// GetSSEHandler returns an HTTP handler
+// for Server-Sent Events (SSE) using Redis Streams.
+func GetSSEHandler(logger util.Logger, redisClient *redis.Client) http.HandlerFunc {
+	if redisClient == nil {
+		logger.Error("GetSSEHandler requires a non-nil Redis client")
+		return func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "Internal Server Error: Redis client not configured", http.StatusInternalServerError)
+		}
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		serveSSE(logger, w, r)
+		serveSSEWithStream(logger, redisClient, w, r) // Call the new function
 	}
 }
 
-// serveSSE handles incoming SSE requests.
-func serveSSE(logger util.Logger, w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	// Get Run ID from Header.
-	runId := r.Header.Get(runIdHeader)
-	if runId == "" {
-		logger.Warn(fmt.Sprintf("[SSE Handler] Missing %s header", runIdHeader))
-		http.Error(w, fmt.Sprintf("Missing %s header", runIdHeader), http.StatusBadRequest)
-		return
+func sendSSEData(w http.ResponseWriter, rc *http.ResponseController, payload string, runId string, logger *util.Logger) bool {
+	// logger.Info(fmt.Sprintf("[SSE SENDING DATA] runId=%s | data=%s", runId, payload)) // Debug log
+	_, writeErr := fmt.Fprintf(w, "data: %s\n\n", payload) // Payload should already be JSON string
+	if writeErr != nil {
+		// Don't log excessive errors if client simply disconnected
+		if !errors.Is(writeErr, context.Canceled) && !strings.Contains(writeErr.Error(), "client disconnected") && !strings.Contains(writeErr.Error(), "connection reset by peer") {
+			logger.Warn(fmt.Sprintf("[SSE WRITE ERROR] runId=%s | error=%v", runId, writeErr))
+		}
+		return false // Indicate failure
+	}
+	if flushErr := rc.Flush(); flushErr != nil {
+		if !errors.Is(flushErr, context.Canceled) && !strings.Contains(flushErr.Error(), "client disconnected") {
+			logger.Error(fmt.Sprintf("[SSE FLUSH ERROR] runId=%s | error=%v", runId, flushErr))
+		}
+		return false // Indicate failure
 	}
 
-	// Basic Sanitize Run ID (Prevent path traversal)
-	if strings.Contains(runId, "..") || strings.ContainsAny(runId, "/\\") {
-		logger.Warn(fmt.Sprintf("[SSE Handler] Invalid characters in %s header: %s", runIdHeader, runId))
+	time.Sleep(256 * time.Millisecond)
+	return true // Indicate success
+}
+
+// serveSSEWithStream handles the SSE stream for a given run ID.
+func serveSSEWithStream(logger util.Logger, redisClient *redis.Client, w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	logger.Info("[SSE Stream Handler] Entered serveSSEWithStream")
+
+	runId := r.URL.Query().Get("runId")
+	if runId == "" {
+		runId = r.Header.Get(runIdHeader)
+		if runId == "" {
+			logger.Warn(fmt.Sprintf("[SSE Stream Handler] Missing runId query parameter AND %s header", runIdHeader))
+			http.Error(w, fmt.Sprintf("Missing runId query parameter or %s header", runIdHeader), http.StatusBadRequest)
+			return
+		}
+		logger.Info(fmt.Sprintf("[SSE Stream Handler] Using runId from header: %s", runId))
+	} else {
+		logger.Info(fmt.Sprintf("[SSE Stream Handler] Using runId from query parameter: %s", runId))
+	}
+
+	// Basic Sanitize Run ID.
+	if strings.ContainsAny(runId, "\n\r*?") {
+		logger.Warn(fmt.Sprintf("[SSE Stream Handler] Invalid characters suspected in runId: %s", runId))
 		http.Error(w, "Invalid Run ID format", http.StatusBadRequest)
 		return
 	}
 
-	logFileName := fmt.Sprintf("%s.str", runId)
-	logFilePath := filepath.Join(logDir, logFileName)
-
-	logger.Info(fmt.Sprintf("[SSE Handler] Request received for runId: %s (File: %s)", runId, logFilePath))
+	redisStreamName := runId
+	logger.Info(fmt.Sprintf("[SSE Stream Handler] Determined runId: '%s', Stream Name: '%s'", runId, redisStreamName))
 
 	// Set SSE Headers.
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -57,106 +126,183 @@ func serveSSE(logger util.Logger, w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	// Suggest a retry interval to the client.
-	fmt.Fprintf(w, "retry: %ds\n\n", retrySeconds)
+	_, err := fmt.Fprintf(w, "retry: %ds\n\n", retrySeconds)
+	if err != nil {
+		logger.Error(fmt.Sprintf("[SSE Stream Handler] Error writing retry header for runId %s: %v", runId, err))
+		return
+	}
 
 	rc := http.NewResponseController(w)
 	if rc == nil {
-		logger.Error(fmt.Sprintf("[SSE Handler] Failed to get ResponseController for runId: %s", runId))
-		http.Error(w, "Failed to get ResponseController", http.StatusInternalServerError)
+		logger.Error(fmt.Sprintf("[SSE Stream Handler] Failed to get ResponseController for runId: %s", runId))
 		return
 	}
-
 	if err := rc.Flush(); err != nil {
-		logger.Error(fmt.Sprintf("[SSE Handler] Error flushing response for runId %s: %v", runId, err))
-		http.Error(w, "Error flushing response", http.StatusInternalServerError)
+		logger.Error(fmt.Sprintf("[SSE Stream Handler] Error flushing headers for runId %s: %v", runId, err))
 		return
 	}
+	logger.Info(fmt.Sprintf("[SSE Stream Handler] Flushed SSE headers for runId: %s", runId))
 
-	// Configure and Start Tailing.
-	tailConfig := tail.Config{
-		Location:  &tail.SeekInfo{Offset: 0, Whence: io.SeekStart},
-		ReOpen:    true,
-		MustExist: false,
-		Poll:      true,
-		Follow:    true,
-	}
+	// sendSSEData := func(payload string) bool {
+	// 	// logger.Info(fmt.Sprintf("[SSE SENDING DATA] runId=%s | data=%s", runId, payload)) // Debug log
+	// 	_, writeErr := fmt.Fprintf(w, "data: %s\n\n", payload) // Payload should already be JSON string
+	// 	if writeErr != nil {
+	// 		// Don't log excessive errors if client simply disconnected
+	// 		if !errors.Is(writeErr, context.Canceled) && !strings.Contains(writeErr.Error(), "client disconnected") && !strings.Contains(writeErr.Error(), "connection reset by peer") {
+	// 			logger.Warn(fmt.Sprintf("[SSE WRITE ERROR] runId=%s | error=%v", runId, writeErr))
+	// 		}
+	// 		return false // Indicate failure
+	// 	}
+	// 	if flushErr := rc.Flush(); flushErr != nil {
+	// 		if !errors.Is(flushErr, context.Canceled) && !strings.Contains(flushErr.Error(), "client disconnected") {
+	// 			logger.Error(fmt.Sprintf("[SSE FLUSH ERROR] runId=%s | error=%v", runId, flushErr))
+	// 		}
+	// 		return false // Indicate failure
+	// 	}
 
-	tailer, err := tail.TailFile(logFilePath, tailConfig)
-	if err != nil {
-		logger.Error(fmt.Sprintf("[SSE Tailing] Failed to start tailing file %s for runId %s: %v", logFilePath, runId, err))
-		// Don't send HTTP error here as headers are already sent. Client will retry or disconnect.
-		return
-	}
+	// 	time.Sleep(256 * time.Millisecond)
+	// 	return true // Indicate success
+	// }
 
-	// Ensure tailer is stopped when the handler exits.
-	defer func() {
-		logger.Info(fmt.Sprintf("[SSE Handler] Stopping tailer for runId: %s", runId))
-		// Stopping the tailer closes its internal channels.
-		if stopErr := tailer.Stop(); stopErr != nil {
-			logger.Error(fmt.Sprintf("[SSE Tailing] Error stopping tailer for runId %s: %v", runId, stopErr))
-		}
-	}()
+	// Process Stream.
 
-	logger.Info(fmt.Sprintf("[SSE Handler] Started tailing %s for runId: %s", logFilePath, runId))
+	// Read History from beginning.
+	lastProcessedID := "0-0"
+	logger.Info(fmt.Sprintf("[SSE Stream Handler] Reading historical logs for stream: '%s' from ID: %s", redisStreamName, lastProcessedID))
+	historyProcessed := 0
 
-	// Event Loop - Send lines and handle disconnect.
 	for {
+		// Use XRead to get batches of historical data
+		// We don't block here, just read what's available.
+		cmd := redisClient.XRead(ctx, &redis.XReadArgs{
+			Streams: []string{redisStreamName, lastProcessedID},
+			Count:   streamReadCount,
+		})
+		results, err := cmd.Result()
+
+		if err != nil {
+			// If stream doesn't exist yet, redis.Nil might not be returned by XRead.
+			// Check error message for "NOGROUP" or similar if needed, but often just means empty.
+			// For now, assume empty stream is not an error, just means no history.
+			if errors.Is(err, redis.Nil) || strings.Contains(err.Error(), "NOGROUP") {
+				logger.Info(fmt.Sprintf("[SSE Stream Handler] No historical logs found or reached end for stream: '%s'", redisStreamName))
+				break
+			} else if errors.Is(err, context.Canceled) {
+				// Client disconnected.
+				logger.Info(fmt.Sprintf("[SSE Stream Handler] Context cancelled during history read for runId: %s", runId))
+				return
+			}
+			logger.Error(fmt.Sprintf("[SSE Stream Handler] Error reading history from stream '%s': %v", redisStreamName, err))
+			return
+		}
+
+		if len(results) == 0 || len(results[0].Messages) == 0 {
+			// logger.Info(fmt.Sprintf("[SSE Stream Handler] Finished reading history batch for stream: '%s'", redisStreamName))
+			break
+		}
+
+		streamMessages := results[0].Messages
+		logger.Info(fmt.Sprintf("[SSE Stream Handler] Processing %d historical messages for stream: '%s'", len(streamMessages), redisStreamName))
+
+		for _, msg := range streamMessages {
+			logPayloadStr, ok := msg.Values[logDataField].(string)
+			if !ok {
+				logger.Warn(fmt.Sprintf("[SSE Stream Handler] Invalid data format in stream '%s', ID '%s': Missing or non-string field '%s'", redisStreamName, msg.ID, logDataField))
+				continue
+			}
+
+			// Send the payload.
+			if !sendSSEData(w, rc, logPayloadStr, runId, &logger) {
+				return
+			}
+			historyProcessed++
+
+			// Check if this message is the EOF marker.
+			var logData redisLogPayload
+			if json.Unmarshal([]byte(logPayloadStr), &logData) == nil && logData.Status == eofStatus {
+				logger.Info(fmt.Sprintf("[SSE Stream Handler] EOF marker found in history (ID: %s) for runId: %s", msg.ID, runId))
+				// Send the done event *now* and finish.
+				doneData := `{"message": "Stream ended (found in history)."}`
+				_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", sseDoneEvent, doneData)
+				_ = rc.Flush()
+				return
+			}
+			// Update last ID processed.
+			lastProcessedID = msg.ID
+		}
+
+		// If we read less than requested count, we are likely at the end of history for now.
+		if len(streamMessages) < streamReadCount {
+			break
+		}
+	}
+
+	logger.Info(fmt.Sprintf("[SSE Stream Handler] Finished reading history (%d entries) for stream: '%s'. Last ID: %s. Starting live block.", historyProcessed, redisStreamName, lastProcessedID))
+
+	// Read Live Updates (Blocking).
+	for {
+		// Check context before blocking read.
 		select {
 		case <-ctx.Done():
-			// Client disconnected.
-			logger.Info(fmt.Sprintf("[SSE Handler] Client disconnected for runId: %s", runId))
+			logger.Info(fmt.Sprintf("[SSE Stream Handler] Context done before blocking read for runId %s: %v", runId, ctx.Err()))
 			return
+		default:
+			// Continue to blocking read.
+		}
 
-		case line, ok := <-tailer.Lines:
-			if !ok {
-				// Channel closed, tailer might
-				// have stopped or encountered an error.
-				tailErr := tailer.Err()
-				if tailErr != nil && tailErr != io.EOF {
-					logger.Error(fmt.Sprintf("[SSE Tailing] Error during tailing for runId %s: %v", runId, tailErr))
-				} else {
-					logger.Info(fmt.Sprintf("[SSE Tailing] Tailer lines channel closed for runId: %s", runId))
-				}
+		// logger.Info(fmt.Sprintf("[SSE Stream Handler] Blocking read on stream '%s' from ID: %s", redisStreamName, lastProcessedID))
+		cmd := redisClient.XRead(ctx, &redis.XReadArgs{
+			Streams: []string{redisStreamName, lastProcessedID},
+			Count:   streamReadCount,
+			Block:   blockTimeout,
+		})
+		results, err := cmd.Result()
+
+		if err != nil {
+			// redis.Nil means the block timeout was reached, no new messages.
+			if errors.Is(err, redis.Nil) {
+				// logger.Debug(fmt.Sprintf("[SSE Stream Handler] Block timeout reached for stream '%s', continuing loop.", redisStreamName))
+				continue
+			} else if errors.Is(err, context.Canceled) {
+				// Client disconnected.
+				logger.Info(fmt.Sprintf("[SSE Stream Handler] Context cancelled during blocking read for runId %s: %v", runId, ctx.Err()))
 				return
 			}
 
-			// Debug log.
-			fmt.Printf("[SSE Handler] New line for runId %s: %s\n", runId, line.Text)
+			logger.Error(fmt.Sprintf("[SSE Stream Handler] Error during blocking read for stream '%s': %v", redisStreamName, err))
+			time.Sleep(1 * time.Second)
+			continue
+		}
 
-			if line.Text == "__END__" {
-				logger.Info(fmt.Sprintf("[SSE Handler] Detected END marker for run %s. Sending '%s' event and closing stream.", runId, sseDoneEvent))
+		// Process new messages if any.
+		if len(results) > 0 && len(results[0].Messages) > 0 {
+			streamMessages := results[0].Messages
+			// logger.Info(fmt.Sprintf("[SSE Stream Handler] Processing %d live messages for stream: '%s'", len(streamMessages), redisStreamName))
 
-				// Send SSE event indicating stream end.
-				_, writeErr := fmt.Fprintf(w, "event: %s\ndata: {\"message\": \"Stream ended.\"}\n\n", sseDoneEvent)
-				if writeErr != nil {
-					logger.Warn(fmt.Sprintf("[SSE Handler] Error writing '%s' event for runId %s: %v", sseDoneEvent, runId, writeErr))
+			for _, msg := range streamMessages {
+				logPayloadStr, ok := msg.Values[logDataField].(string)
+				if !ok {
+					logger.Warn(fmt.Sprintf("[SSE Stream Handler] Invalid live data format in stream '%s', ID '%s': Missing or non-string field '%s'", redisStreamName, msg.ID, logDataField))
+					continue
 				}
 
-				// Attempt to flush the final event.
-				if err := rc.Flush(); err != nil {
-					logger.Error(fmt.Sprintf("[SSE Handler] Error flushing final event for runId %s: %v", runId, err))
+				// Send the payload.
+				if !sendSSEData(w, rc, logPayloadStr, runId, &logger) {
 					return
 				}
-				return
+
+				// Check if this message is the EOF marker.
+				var logData redisLogPayload
+				if json.Unmarshal([]byte(logPayloadStr), &logData) == nil && logData.Status == eofStatus {
+					logger.Info(fmt.Sprintf("[SSE Stream Handler] Live EOF marker found (ID: %s) for runId: %s. Sending done event.", msg.ID, runId))
+					doneData := `{"message": "Stream ended."}`
+					_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", sseDoneEvent, doneData)
+					_ = rc.Flush()
+					return
+				}
+				// Update last ID processed.
+				lastProcessedID = msg.ID
 			}
-
-			// Format and send SSE message.
-			// SSE format: "data: content\n\n"
-			_, writeErr := fmt.Fprintf(w, "data: %s\n\n", line.Text)
-
-			if writeErr != nil {
-				logger.Warn(fmt.Sprintf("[SSE Handler] Error writing to client for runId %s: %v", runId, writeErr))
-				return
-			}
-
-			if err := rc.Flush(); err != nil {
-				logger.Error(fmt.Sprintf("[SSE Handler] Error flushing response for runId %s: %v", runId, err))
-				return
-			}
-
-			// Sleep to prevent overwhelming the client.
-			time.Sleep(50 * time.Millisecond)
 		}
 	}
 }

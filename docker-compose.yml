@@ -16,3 +16,4 @@ services:
       FRONTEND_URL : http://localhost:3000
       HTTP_PORT : 5002
       AUTH_GRPC_ADDRESS : host.docker.internal:5001
+      REDIS_URL: redis://host.docker.internal:6379/0
