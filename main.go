@@ -5,7 +5,6 @@ import (
 	"errors"
 	"evolve/controller"
 	"evolve/modules/sse"
-	"evolve/modules/ws"
 	"evolve/routes"
 	"evolve/util"
 	"fmt"
@@ -36,16 +35,19 @@ func main() {
 
 	var logger = util.NewLogger()
 
-	// Context and Graceful Shutdown Setup.
+	redisClient, err := sse.GetRedisClient(*logger)
+	if err != nil {
+		logger.Error(fmt.Sprintf("Failed to initialize Redis client: %v. Exiting.", err))
+		os.Exit(1)
+	}
+	logger.Info("Redis client initialized successfully.")
+
+	// Use context for cancellation signal propagation.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Start WebSocket Server.
-	wsHub := ws.StartServer(ctx, *logger)
-	logger.Info("WebSocket Hub started.")
-
-	// Register HTTP Routes.
-	mux := http.DefaultServeMux
+	// Register HTTP Routes
+	mux := http.NewServeMux()
 
 	mux.HandleFunc(routes.TEST, controller.Test)
 	mux.HandleFunc(routes.EA, controller.CreateEA)
@@ -56,24 +58,18 @@ func main() {
 	mux.HandleFunc(routes.SHARE_RUN, controller.ShareRun)
 	mux.HandleFunc(routes.RUN, controller.UserRun)
 
-	// WebSocket Route.
-	wsHandler := ws.GetHandler(ctx, wsHub, *logger)
-	mux.HandleFunc(routes.LIVE, wsHandler)
-	logger.Info("WebSocket endpoint registered at /live/")
-
-	// SSE Route.
-	sseHandler := sse.GetSSEHandler(*logger)
+	sseHandler := sse.GetSSEHandler(*logger, redisClient)
 	mux.HandleFunc(routes.LOGS, sseHandler)
-	logger.Info("SSE endpoint registered at /runs/logs/")
+	logger.Info(fmt.Sprintf("SSE endpoint registered at %s using Redis Pub/Sub", routes.LOGS))
 
-	// Log the test endpoint URL.
 	logger.Info(fmt.Sprintf("Test http server on http://localhost%s/api/test", PORT))
 
 	// CORS Configuration.
 	corsHandler := cors.New(cors.Options{
 		AllowedOrigins:   []string{FRONTEND_URL},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"*"},
+		AllowedHeaders:   []string{"*", "X-RUN-ID"},
+		ExposedHeaders:   []string{},
 		AllowCredentials: true,
 	}).Handler(mux)
 
@@ -81,15 +77,16 @@ func main() {
 	server := &http.Server{
 		Addr:         PORT,
 		Handler:      corsHandler,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 0, // Set WriteTimeout to 0 for long-lived SSE connections.
-		IdleTimeout:  0, // Set IdleTimeout to 0 for long-lived SSE connections.
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 0,
+		IdleTimeout:  0,
 		BaseContext:  func(_ net.Listener) context.Context { return ctx },
 	}
 
-	// Start server in a goroutine.
+	// Start server in a goroutine so
+	// it doesn't block the graceful shutdown handling.
 	go func() {
-		logger.Info(fmt.Sprintf("HTTP server starting on %s (Frontend: %s)", server.Addr, FRONTEND_URL))
+		logger.Info(fmt.Sprintf("HTTP server starting on %s (Allowed Frontend Origin: %s)", server.Addr, FRONTEND_URL))
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error(fmt.Sprintf("HTTP server ListenAndServe error: %v", err))
 			stop()
@@ -99,16 +96,25 @@ func main() {
 	// Wait for Shutdown Signal.
 	<-ctx.Done()
 
-	// Initiate Graceful Shutdown.
 	logger.Info("Shutdown signal received. Starting graceful shutdown...")
 
-	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
+	// Create a context with a timeout for the shutdown process.
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancelShutdown()
 
+	// Attempt to gracefully shut down the HTTP server.
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error(fmt.Sprintf("HTTP server graceful shutdown failed: %v", err))
 	} else {
 		logger.Info("HTTP server shutdown complete.")
+	}
+
+	// Close Redis Client.
+	logger.Info("Shutting down Redis client...")
+	if redisErr := redisClient.Close(); redisErr != nil {
+		logger.Error(fmt.Sprintf("Redis client shutdown error: %v", redisErr))
+	} else {
+		logger.Info("Redis client shutdown complete.")
 	}
 
 	logger.Info("Server exiting.")
